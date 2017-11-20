@@ -93,8 +93,7 @@ class LogExtractor(object):
 
     def extract_all(self, path):
         """
-        Extract recursively all archives under the path directory and
-        copy all relevant files to the path directory
+        Extract recursively all archives under the path directory
 
         Args:
             path (str): Path to the directory
@@ -115,16 +114,29 @@ class LogExtractor(object):
                     f_path = dst_path
                     if os.path.isdir(f_path):
                         self.extract_all(f_path)
+            if dirs:
+                for dir_name in dirs:
+                    self.extract_all(dir_name)
+
+    def copy_relevant_files(self, path):
+        """
+        Copy all relevant files to the path directory
+
+        Args:
+            path (str): Path to the directory
+        """
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                f_path = os.path.join(root, f)
                 if os.path.isfile(f_path) and self._is_relevant_file(f_path):
                     dst_path = os.path.join(self.dst, os.path.basename(f_path))
                     if self._is_host_log(f_path):
                         dst_path = self._generate_host_log_name(f_path)
                     if f_path != dst_path and not helper.is_archive(f_path):
                         shutil.copy(f_path, dst_path)
-
             if dirs:
                 for dir_name in dirs:
-                    self.extract_all(dir_name)
+                    self.copy_relevant_files(dir_name)
 
     @classmethod
     def _get_art_log_ts(cls, line):
@@ -562,6 +574,7 @@ def run(job, build, folder, logs, team, skip_download, clean,
         os.makedirs(build_folder)
 
     found_local_logs = check_for_existing_logs_file(path=build_folder)
+    skip_extraction = False
 
     if not skip_download and not found_local_logs:
         jenkins_connection = get_jenkins_connection()
@@ -576,7 +589,7 @@ def run(job, build, folder, logs, team, skip_download, clean,
                 "Using existing log file found in {folder}".format(
                     folder=build_folder)
             )
-        else:
+        elif not os.path.isdir(local_log_file):
             logs_dir_name = os.path.basename(local_log_file)
             logs_link_name = os.path.join(build_folder, logs_dir_name)
             if not os.path.exists(logs_link_name):
@@ -585,10 +598,17 @@ def run(job, build, folder, logs, team, skip_download, clean,
                         folder=logs_link_name, log_dir=local_log_file)
                 )
                 os.link(local_log_file, logs_link_name)
+        else:
+            skip_extraction = True
+            logger.info("Will parse logs from local directory {0}".format(
+                local_log_file)
+            )
 
     logs = logs.split(",") if logs else const.DEFAULT_LOGS
     log_extractor = LogExtractor(dst=build_folder, logs=logs)
-    log_extractor.extract_all(path=build_folder)
+    if not skip_extraction:
+        log_extractor.extract_all(path=build_folder)
+    log_extractor.copy_relevant_files(path=build_folder)
     log_extractor.parse_art_logs(team=team)
     log_extractor.parse_logs()
     logger.info("Logs was extracted to {folder}".format(folder=build_folder))
